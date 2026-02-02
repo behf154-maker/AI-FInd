@@ -4,6 +4,17 @@ const mysql = require("mysql2/promise");
 
 const MIGRATION_TABLE = "__migrations";
 
+function parseMysqlUrl(dbUrl) {
+  const u = new URL(dbUrl);
+  return {
+    host: u.hostname,
+    port: u.port ? Number(u.port) : 3306,
+    user: decodeURIComponent(u.username),
+    password: decodeURIComponent(u.password),
+    database: u.pathname.replace("/", ""),
+  };
+}
+
 async function ensureMigrationsTable(conn) {
   await conn.query(`
     CREATE TABLE IF NOT EXISTS ${MIGRATION_TABLE} (
@@ -32,9 +43,14 @@ async function run() {
   const dbUrl = process.env.MYSQL_URL || process.env.DATABASE_URL;
   if (!dbUrl) throw new Error("MYSQL_URL is not set in Railway Variables");
 
-  const conn = await mysql.createConnection(dbUrl);
+  const opts = parseMysqlUrl(dbUrl);
 
-  // الملفات بالترتيب اللي انت بعته
+  // ✅ Connection واحدة تدعم multiple statements
+  const conn = await mysql.createConnection({
+    ...opts,
+    multipleStatements: true,
+  });
+
   const files = [
     "schema.sql",
     "complete_setup.sql",
@@ -54,8 +70,7 @@ async function run() {
       continue;
     }
 
-    const applied = await alreadyApplied(conn, file);
-    if (applied) {
+    if (await alreadyApplied(conn, file)) {
       console.log(`✅ Already applied: ${file}`);
       continue;
     }
@@ -68,16 +83,7 @@ async function run() {
     }
 
     console.log(`🚀 Applying: ${file}`);
-    // mysql2 يسمح بتنفيذ multiple statements لو sql فيه كذا statement
-    // لكن لازم نفعّل multipleStatements في الـ connection:
-    // أسهل: نفتح connection جديد بالـ option ده:
-    const conn2 = await mysql.createConnection({
-      uri: dbUrl,
-      multipleStatements: true,
-    });
-    await conn2.query(sql);
-    await conn2.end();
-
+    await conn.query(sql);
     await markApplied(conn, file);
     console.log(`✅ Applied: ${file}`);
   }
