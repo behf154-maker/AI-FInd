@@ -36,15 +36,17 @@ if (!fs.existsSync(uploadsDir)) {
 app.use('/uploads', express.static(uploadsDir));
 
 // MySQL connection pool
-const pool = mysql.createPool({
+const pool = mysql.createPool(process.env.MYSQL_PUBLIC_URL || {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'ai_lost_and_found',
+  database: process.env.DB_NAME || 'railway',
+  port: Number(process.env.DB_PORT || 3306),
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 });
+
 
 // Routes
 app.use('/api/auth', require('./routes/auth')(pool));
