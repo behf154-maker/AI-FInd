@@ -399,7 +399,7 @@ module.exports = (pool, upload) => {
 
       connection.release();
 
-      res.status(201).json({ message: 'Item reported successfully' });
+      res.status(201).json({ message: 'Item reported successfully', itemId: newItemId });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to report item' });
