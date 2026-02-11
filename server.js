@@ -35,17 +35,48 @@ if (!fs.existsSync(uploadsDir)) {
 }
 app.use('/uploads', express.static(uploadsDir));
 
-// MySQL connection pool
-const pool = mysql.createPool(process.env.MYSQL_PUBLIC_URL || {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'railway',
-  port: Number(process.env.DB_PORT || 3306),
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
+// MySQL connection pool (stable for Railway)
+const usePublicUrl = !!process.env.MYSQL_PUBLIC_URL && process.env.USE_MYSQL_PUBLIC_URL === "true";
+
+const poolConfig = usePublicUrl
+  ? process.env.MYSQL_PUBLIC_URL
+  : {
+      host: process.env.DB_HOST || "localhost",
+      port: Number(process.env.DB_PORT || 3306),
+      user: process.env.DB_USER || "root",
+      password: process.env.DB_PASSWORD || "",
+      database: process.env.DB_NAME || "railway",
+
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+
+      // IMPORTANT: reduce random disconnects
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 0,
+
+      // timeouts
+      connectTimeout: 10000,
+    };
+
+const pool = mysql.createPool(poolConfig);
+
+// Optional: log pool errors (doesn't crash the app)
+pool.on("error", (err) => {
+  console.error("MySQL pool error:", err?.code || err);
 });
+
+// Test DB connection on startup (so you see errors early)
+(async () => {
+  try {
+    const conn = await pool.getConnection();
+    await conn.ping();
+    conn.release();
+    console.log("✅ MySQL connected & ping OK");
+  } catch (e) {
+    console.error("❌ MySQL connection failed:", e?.code || e);
+  }
+})();
 
 
 // Routes
