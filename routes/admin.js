@@ -67,7 +67,7 @@ module.exports = (pool) => {
     }
   });
 
-  // Get all items
+  // Get all items with reporter (student) details
   router.get('/items', async (req, res, next) => {
     verifyAdminToken(req, res, next, pool);
   }, async (req, res) => {
@@ -75,12 +75,55 @@ module.exports = (pool) => {
       const connection = await pool.getConnection();
 
       const [rows] = await connection.execute(
-        'SELECT * FROM items ORDER BY date_reported DESC'
+        `SELECT 
+          i.item_id, i.user_id, i.item_type, i.category, i.subcategory,
+          i.color, i.size, i.material, i.brand, i.location_found, i.date_found,
+          i.unique_marks, i.pattern, i.image_path, i.status, i.date_reported,
+          i.description, i.created_at, i.updated_at,
+          u.name AS student_name, u.email AS student_email, u.phone AS student_phone,
+          u.class AS student_class, u.school AS student_school, u.grade AS student_grade
+        FROM items i
+        LEFT JOIN users u ON u.user_id = i.user_id
+        ORDER BY i.date_reported DESC`
       );
 
       connection.release();
 
-      res.json({ items: rows });
+      const items = rows.map((row) => {
+        const { student_name, student_email, student_phone, student_class, student_school, student_grade, ...item } = row;
+        return {
+          item_id: row.item_id,
+          user_id: row.user_id,
+          item_type: row.item_type,
+          category: row.category,
+          subcategory: row.subcategory,
+          color: row.color,
+          size: row.size,
+          material: row.material,
+          brand: row.brand,
+          location_found: row.location_found,
+          date_found: row.date_found,
+          unique_marks: row.unique_marks,
+          pattern: row.pattern,
+          image_path: row.image_path,
+          status: row.status,
+          date_reported: row.date_reported,
+          description: row.description,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+          reported_by: row.user_id ? {
+            user_id: row.user_id,
+            name: student_name,
+            email: student_email,
+            phone: student_phone,
+            class: student_class,
+            school: student_school,
+            grade: student_grade,
+          } : null,
+        };
+      });
+
+      res.json({ items });
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to fetch items' });
@@ -95,7 +138,7 @@ module.exports = (pool) => {
       const connection = await pool.getConnection();
 
       const [rows] = await connection.execute(
-        'SELECT user_id, name, email, role, student_name, school, grade, is_banned, banned_at, banned_reason, created_at FROM users'
+        'SELECT user_id, name, email, role, student_name, school, grade, phone, class, is_banned, banned_at, banned_reason, created_at FROM users'
       );
 
       connection.release();
@@ -128,6 +171,75 @@ module.exports = (pool) => {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Failed to update item' });
+    }
+  });
+
+  // Notify student about found item (admin manual notification)
+  router.post('/items/:itemId/notify', async (req, res, next) => {
+    verifyAdminToken(req, res, next, pool);
+  }, async (req, res) => {
+    try {
+      const itemId = req.params.itemId;
+      const { student_email, message, target_lost_item_id } = req.body;
+
+      if (!student_email || typeof student_email !== 'string' || !student_email.trim()) {
+        return res.status(400).json({ error: 'student_email is required' });
+      }
+
+      const connection = await pool.getConnection();
+
+      const [itemRows] = await connection.execute(
+        `SELECT i.item_id, i.item_type, i.user_id, i.image_path,
+                u.name, u.email, u.phone, u.class, u.school, u.grade
+         FROM items i
+         LEFT JOIN users u ON u.user_id = i.user_id
+         WHERE i.item_id = ?`,
+        [itemId]
+      );
+
+      if (itemRows.length === 0) {
+        connection.release();
+        return res.status(404).json({ error: 'Item not found' });
+      }
+
+      const [studentRows] = await connection.execute(
+        'SELECT user_id, name, email, phone, class, school, grade FROM users WHERE email = ?',
+        [student_email.trim()]
+      );
+
+      if (studentRows.length === 0) {
+        connection.release();
+        return res.status(404).json({ error: 'No user found with that email' });
+      }
+
+      const student = studentRows[0];
+      const defaultMessage = message && message.trim()
+        ? message.trim()
+        : `Your lost item has been found. Item: ${itemRows[0].item_type} (ID #${itemId}). Please visit the office to collect it.`;
+
+      await connection.execute(
+        `INSERT INTO notifications
+         (user_id, item_id, message, is_read, student_id, student_name, student_email, student_phone, student_class, student_school, student_grade, notification_type, created_by_admin)
+         VALUES (?, ?, ?, FALSE, ?, ?, ?, ?, ?, ?, ?, 'manual_admin_notify', 1)`,
+        [
+          student.user_id,
+          itemId,
+          defaultMessage,
+          student.user_id,
+          student.name,
+          student.email,
+          student.phone || null,
+          student.class || null,
+          student.school || null,
+          student.grade || null,
+        ]
+      );
+
+      connection.release();
+      res.status(201).json({ success: true });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Failed to notify student' });
     }
   });
 
